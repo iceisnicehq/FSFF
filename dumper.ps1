@@ -1,14 +1,9 @@
 <#
 .SYNOPSIS
-    FAT12/16 Ultimate Forensics Tool (v9 - The "Restore Everything" Version)
+    FAT12/16 Ultimate Forensics Tool (v10 - Large Disk Fix)
 .DESCRIPTION
-    - Full BPB Table (Clean Hex).
-    - Detailed Math Formulas.
-    - Memory Layout.
-    - Recursive File Extraction.
-    - Metadata: Entry Offsets, Data Offsets, Created/Modified Timestamps.
-    - Long Cluster Chains (up to 50).
-    - Complete Forensic Statistics (Slack, Fragmentation, Deleted, etc.).
+    Fixes the "Negative Cluster Count" bug by reading BPB_TotSec32 when 
+    BPB_TotSec16 is zero.
 .PARAMETER Dump
     Path to the disk image (.vhd, .img, .bin).
 .PARAMETER Boot
@@ -74,7 +69,6 @@ try {
     exit
 }
 
-# Reader helper that keeps values raw (Int) so we can format them cleanly later
 function Read-BpbVal {
     param($Name, $RelOffset, $Size, $Type="Int")
     
@@ -89,13 +83,11 @@ function Read-BpbVal {
     if ($Type -eq "ASCII") {
         $DecVal = [System.Text.Encoding]::ASCII.GetString($Raw)
         $Desc = $DecVal
-        # For ASCII, the Hex Value is just the raw bytes
         $HexVal = $HexRaw
     } else {
         if ($Size -eq 1) { $DecVal = $Raw[0] }
         elseif ($Size -eq 2) { $DecVal = [BitConverter]::ToUInt16($Raw, 0) }
         elseif ($Size -eq 4) { $DecVal = [BitConverter]::ToUInt32($Raw, 0) }
-        # Keep HexVal empty here, we format in the table
     }
 
     if ($Name -eq "BPB_Media") {
@@ -121,14 +113,14 @@ $Params += Read-BpbVal "BPB_RootEntCnt" 0x11 2 "Int"
 $Params += Read-BpbVal "BPB_TotSec16"   0x13 2 "Int"
 $Params += Read-BpbVal "BPB_Media"      0x15 1 "Int"
 $Params += Read-BpbVal "BPB_FATSz16"    0x16 2 "Int"
+$Params += Read-BpbVal "BPB_TotSec32"   0x20 4 "Int" # <--- ADDED THIS!
 $Params += Read-BpbVal "BS_VolID"       0x27 4 "Int"
 $Params += Read-BpbVal "BS_VolLab"      0x2B 11 "ASCII"
 
 Log-Output "`n=== Table 1. BPB Parameters ===" "Yellow"
 
-# Custom Table Formatting to fix 0x0x issue
 $TableStr = $Params | Select-Object Characteristic, 
-    @{N='Offset'; E={"{0:X2}" -f $_.Offset}}, 
+    @{N='Offset'; E={"0x{0:X2}" -f $_.Offset}}, 
     Size, 
     @{N='Value (Hex)'; E={
         if ($_.Type -eq "ASCII") { $_.RawHex } 
@@ -149,26 +141,37 @@ $RsvdSecCnt = ($Params | ? Characteristic -eq "BPB_RsvdSecCnt").Dec
 $NumFATs    = ($Params | ? Characteristic -eq "BPB_NumFATs").Dec
 $RootEntCnt = ($Params | ? Characteristic -eq "BPB_RootEntCnt").Dec
 $TotSec16   = ($Params | ? Characteristic -eq "BPB_TotSec16").Dec
+$TotSec32   = ($Params | ? Characteristic -eq "BPB_TotSec32").Dec
 $FATSz16    = ($Params | ? Characteristic -eq "BPB_FATSz16").Dec
 
 Log-Output "=== File System Calculations ===" "Cyan"
 
-# 1. RootDirSectors
+# 1. Total Sectors Logic
+$TotalSectors = 0
+if ($TotSec16 -ne 0) {
+    $TotalSectors = $TotSec16
+    Log-Output "0) TotalSectors: Using BPB_TotSec16 = $TotSec16"
+} else {
+    $TotalSectors = $TotSec32
+    Log-Output "0) TotalSectors: BPB_TotSec16 is 0. Using BPB_TotSec32 = $TotSec32" "Green"
+}
+
+# 2. RootDirSectors
 $RootDirSectors = [int][math]::Ceiling(($RootEntCnt * 32) / $BytsPerSec)
 Log-Output "1) RootDirSectors = ((BPB_RootEntCnt * 32) + (BPB_BytsPerSec - 1)) / BPB_BytsPerSec"
 Log-Output "   = (($RootEntCnt * 32) + ($BytsPerSec - 1)) / $BytsPerSec = $RootDirSectors" "Green"
 
-# 2. DataSectors
-$DataSectors = $TotSec16 - ($RsvdSecCnt + ($NumFATs * $FATSz16) + $RootDirSectors)
-Log-Output "`n2) DataSectors = BPB_TotSec16 - (BPB_RsvdSecCnt + (BPB_NumFATs * BPB_FATSz16) + RootDirSectors)"
-Log-Output "   = $TotSec16 - ($RsvdSecCnt + ($NumFATs * $FATSz16) + $RootDirSectors) = $DataSectors" "Green"
+# 3. DataSectors
+$DataSectors = $TotalSectors - ($RsvdSecCnt + ($NumFATs * $FATSz16) + $RootDirSectors)
+Log-Output "`n2) DataSectors = TotalSectors - (BPB_RsvdSecCnt + (BPB_NumFATs * BPB_FATSz16) + RootDirSectors)"
+Log-Output "   = $TotalSectors - ($RsvdSecCnt + ($NumFATs * $FATSz16) + $RootDirSectors) = $DataSectors" "Green"
 
-# 3. CountOfClusters
+# 4. CountOfClusters
 $CountOfClusters = [math]::Floor($DataSectors / $SecPerClus)
 Log-Output "`n3) CountOfClusters = DataSectors / BPB_SecPerClus"
 Log-Output "   = $DataSectors / $SecPerClus = $CountOfClusters" "Green"
 
-# 4. FAT Type
+# 5. FAT Type
 Log-Output "`n=== File System Type Determination ===" "Cyan"
 Log-Output "CountOfClusters < 4085 => FAT12"
 Log-Output "4085 <= CountOfClusters < 65525 => FAT16"
@@ -194,7 +197,7 @@ if ($NumFATs -eq 2) { $RootDir_Start = $FAT2_End + 1 } else { $RootDir_Start = $
 $RootDir_End    = $RootDir_Start + ($RootDirSectors * $BytsPerSec) - 1
 
 $Data_Start     = $RootDir_End + 1
-$Data_End       = $BootOffset + ($TotSec16 * $BytsPerSec) - 1
+$Data_End       = $BootOffset + ($TotalSectors * $BytsPerSec) - 1
 
 Log-Output "`n=== Memory Layout (Hex) ===" "Yellow"
 Log-Output " Reserved (Boot):  0x$("{0:X}" -f $Reserved_Start) - 0x$("{0:X}" -f $Reserved_End)"
@@ -242,7 +245,7 @@ Log-Output " Used FAT Entries:  $FatEntriesUsed"
 function Get-ClusterChain($StartCluster) {
     $Chain = @(); $Curr = $StartCluster
     $EOF = if ($FATType -eq "FAT16") { 0xFFF8 } else { 0xFF8 }
-    $Limit = 50 # Increased chain limit per request
+    $Limit = 50 
     while ($Curr -ge 2 -and $Curr -lt $EOF) {
         $Chain += $Curr; 
         if ($Curr -ge $FatEntriesTotal) { break }
@@ -357,7 +360,6 @@ function Parse-Directory($DirOffset, $IsRoot, $Indent, $CurrentPath) {
             $Global:Stats.SubDirectories++
             Log-Output "$Indent[$Name] (DIR)" "Green"
             Log-Output "$Indent  Entry Offset: $EntryHex | Start Cluster: $StartCluster" "Gray"
-            # RESTORED: Directory Metadata
             Log-Output "$Indent  Created: $CrtDate $CrtTime | Modified: $ModDate $ModTime" "Gray"
             
             $NewPath = Join-Path $CurrentPath $Name
@@ -368,7 +370,6 @@ function Parse-Directory($DirOffset, $IsRoot, $Indent, $CurrentPath) {
         else {
             $Chain = Get-ClusterChain $StartCluster
             
-            # --- Advanced Stats ---
             $Global:Stats.TotalBytes += $FileSize
             $Global:Stats.TotalUsedClusters += $Chain.Count
             
@@ -384,7 +385,6 @@ function Parse-Directory($DirOffset, $IsRoot, $Indent, $CurrentPath) {
             
             if ($Attr -band 0x02) { $Global:Stats.HiddenFiles++ }
             
-            # RESTORED: Chain Limit 50
             $ChainStr = if ($Chain.Count -gt 50) { ($Chain[0..49] -join ",") + "..." } else { $Chain -join "," }
             $DataHex = "N/A"
             if ($StartCluster -ge 2) {
@@ -395,7 +395,6 @@ function Parse-Directory($DirOffset, $IsRoot, $Indent, $CurrentPath) {
             Log-Output "$Indent$Name" "White"
             Log-Output "$Indent  Entry Offset: $EntryHex | Data Offset: $DataHex" "Gray"
             Log-Output "$Indent  Size: $FileSize | Clusters: $($Chain.Count) | Chain: $ChainStr" "DarkGray"
-            # RESTORED: File Metadata
             Log-Output "$Indent  Created: $CrtDate $CrtTime | Modified: $ModDate $ModTime" "Gray"
             
             $DestFile = Join-Path $CurrentPath $Name
