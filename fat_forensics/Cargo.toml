@@ -1,0 +1,13 @@
+[package]
+name = "fat_forensics"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Windows API for Popups
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winuser", "libloaderapi"] }
+chrono = "0.4" # For nice date formatting (Optional, but recommended. If not using, remove logic)
+
+[build-dependencies]
+winres = "0.1"
