@@ -321,12 +321,12 @@ class HFSPlusDetailedAnalyzer:
                     else: ftype_desc = f"неизвестно (0x{recordType:04X})"
                     
                     print("\n  ──────────────────────────────────────────────────────────────────────")
-                    print(f"        {ord_str} запись (смещение внутри узла 0x{rec_offset:04X}):")
-                    print(f"        {record_data[:16].hex(' ').upper()} ...")
-                    print(f"        keyLength =0x{keyLength:04X} → {keyLength} байт")
-                    print(f"        parentID = 0x{parentID:08X} → {parentID}")
-                    print(f"        nodeName = «{nodeName}»")
-                    print(f"        recordType = 0x{recordType:04X} → {ftype_desc}")
+                    print(f"{ord_str} запись (смещение внутри узла 0x{rec_offset:04X}):")
+                    print(f"{record_data[:16].hex(' ').upper()} ...")
+                    print(f"keyLength =0x{keyLength:04X} → {keyLength} байт")
+                    print(f"parentID = 0x{parentID:08X} → {parentID}")
+                    print(f"nodeName = «{nodeName}»")
+                    print(f"recordType = 0x{recordType:04X} → {ftype_desc}")
                     
                     item_info = {
                         'name': nodeName,
