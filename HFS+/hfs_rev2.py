@@ -60,6 +60,7 @@ class HFSPlusDetailedAnalyzer:
         self.total_files = 0
         self.total_sys = 0
         self.max_depth = 0
+        self.volume_name = "Неизвестно"
         
         self.extract_base_dir = "HFS_Recovered"
         os.makedirs(self.extract_base_dir, exist_ok=True)
@@ -204,6 +205,60 @@ class HFSPlusDetailedAnalyzer:
         phys_root = self.get_physical_offset(root_ofs, self.catalog_extents)
         print(f"\n📍 Расчет смещения корневого узла: rootNodeOfs = rootNode * nodeSize = {self.rootNode} * {self.nodeSize} = 0x{root_ofs:08X} (Физический: 0x{phys_root:08X})")
         
+        print(f"\n  🔍 ============================================================")
+        print(f"  🔍 АНАЛИЗ КОРНЕВОГО УЗЛА B-ДЕРЕВА (Root Node ID: {self.rootNode}, Физическое смещение: 0x{phys_root:08X})")
+        print(f"  🔍 ============================================================")
+        root_data = self.read_logical_data(root_ofs, self.nodeSize, self.catalog_extents)
+        if root_data:
+            r_fLink = struct.unpack('>I', root_data[0:4])[0]
+            r_bLink = struct.unpack('>I', root_data[4:8])[0]
+            r_kind = root_data[8]
+            r_height = root_data[9]
+            r_numRecords = struct.unpack('>H', root_data[10:12])[0]
+            
+            kind_str = "Неизвестный"
+            if r_kind == 0x00: kind_str = "Index Node (0x00) - Индексный узел"
+            elif r_kind == 0x01: kind_str = "Header Node (0x01) - Заголовочный узел"
+            elif r_kind == 0x02: kind_str = "Map Node (0x02) - Узел карты"
+            elif r_kind == 0xFF: kind_str = "Leaf Node (0xFF) - Листовой узел"
+            
+            print(f"  Тип узла: {kind_str}")
+            print(f"  Количество записей: {r_numRecords}")
+            print(f"  Высота в дереве: {r_height}")
+            print("  📋 Сырые данные Root Node (первые 128 байт):")
+            print(format_hex_dump(root_data, phys_root, 128))
+            
+            if r_kind == 0x00:
+                print("\n  📂 РАЗБОР ИНДЕКСНЫХ ЗАПИСЕЙ КОРНЕВОГО УЗЛА:")
+                for i in range(r_numRecords):
+                    offset_ptr = self.nodeSize - 2 * (i + 1)
+                    rec_offset = struct.unpack('>H', root_data[offset_ptr:offset_ptr+2])[0]
+                    
+                    if i < r_numRecords - 1:
+                        next_offset_ptr = self.nodeSize - 2 * (i + 2)
+                        next_rec_offset = struct.unpack('>H', root_data[next_offset_ptr:next_offset_ptr+2])[0]
+                        rec_len = next_rec_offset - rec_offset
+                    else:
+                        rec_len = offset_ptr - rec_offset
+                        
+                    record_data = root_data[rec_offset : rec_offset + rec_len]
+                    
+                    if len(record_data) >= 8:
+                        keyLength = struct.unpack('>H', record_data[0:2])[0]
+                        r_parentID = struct.unpack('>I', record_data[2:6])[0]
+                        r_nameLen = struct.unpack('>H', record_data[6:8])[0]
+                        
+                        name_bytes = record_data[8:8+(r_nameLen*2)]
+                        r_nodeName = name_bytes.decode('utf-16be', errors='ignore')
+                        r_nodeName = sanitize_filename(r_nodeName)
+                        
+                        data_offset = 2 + keyLength
+                        if data_offset + 4 <= len(record_data):
+                            childNode = struct.unpack('>I', record_data[data_offset:data_offset+4])[0]
+                            print(f"        Запись {i+1}: Ключ (parentID: {r_parentID}, name: '{r_nodeName}') -> Указывает на дочерний узел (Node ID): {childNode}")
+                        else:
+                            print(f"        Запись {i+1}: Ключ (parentID: {r_parentID}, name: '{r_nodeName}') -> [Ошибка: нет данных указателя]")
+
         current_node = self.firstLeafNode
         leaf_idx = 1
         
@@ -287,6 +342,11 @@ class HFSPlusDetailedAnalyzer:
                         self.total_dirs += 1
                         print(f"        folderID = 0x{folderID:08X} ({folderID})")
                         print(f"        createDate = {format_time_msk(createDate)}")
+
+
+                        if parentID == 1 and folderID == 2:
+                            self.volume_name = nodeName
+                            print(f"\n        *** НАЙДЕНА МЕТКА ТОМА (VOLUME NAME): «{self.volume_name}» ***\n")
                         
                     elif recordType == 2:
                         fileID = struct.unpack('>I', record_data[data_offset+8:data_offset+12])[0]
@@ -416,6 +476,10 @@ class HFSPlusDetailedAnalyzer:
         print("\n====================================================================================================")
         print("                                               ВЫВОДЫ")
         print("====================================================================================================")
+        
+        print(f"\n💿 ИНФОРМАЦИЯ О ТОМЕ:")
+        print(f"   - Метка тома (Имя): {self.volume_name}")
+
         print(f"\n📊 СТАТИСТИКА:")
         print(f"   - Всего объектов: {self.total_objects}")
         print(f"   - Каталогов: {self.total_dirs}")
@@ -451,6 +515,7 @@ if __name__ == '__main__':
                 print(f"\n📍 Смещение раздела: 0x{offset:08X} ({offset} байт)")
                 analyzer = HFSPlusDetailedAnalyzer(FILENAME, offset)
                 analyzer.print_final_report()
+                
         finally:
             sys.stdout = original_stdout
             
