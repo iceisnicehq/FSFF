@@ -29,7 +29,7 @@ def analyze_pe(file_path):
         print(f"Файл {file_path} не найден.")
         return
 
-    report_path = f"{os.path.splitext(file_path)[0]}_lab_report_full.txt"
+    report_path = f"{os.path.splitext(file_path)[0]}_report.txt"
     
     with open(file_path, "rb") as f, open(report_path, "w", encoding="utf-8") as out:
         
@@ -423,39 +423,39 @@ def analyze_pe(file_path):
         log()
 
         pe_sig_hex = ' '.join(f'{b:02X}' for b in pe_sig_bytes)
-        ans1 = f"e_lfanew: 0x{e_lfanew:08X}, байты по смещению e_lfanew: {pe_sig_hex}"
+        ans1 = f"0x{e_lfanew:08X},{pe_sig_hex}"
         log("Вопрос 1: \"В hex-редакторе найдите поле e_lfanew структуры IMAGE_DOS_HEADER. Запишите значение в hex со всеми нулями. Запишите байты по смещению e_lfanew в файле.\"")
-        log(f"Ответ: \"{ans1}\"")
+        log(f"Ответ: {ans1}")
         log()
 
         va = image_base + ep_rva
         if is_pe32_plus:
-            ans2 = f"ImageBase: 0x{image_base:016X}, EP RVA: 0x{ep_rva:08X}, VA: 0x{va:016X}"
+            ans2 = f"0x{image_base:016X},0x{ep_rva:08X},0x{va:016X}"
         else:
-            ans2 = f"ImageBase: 0x{image_base:08X}, EP RVA: 0x{ep_rva:08X}, VA: 0x{va:08X}"
+            ans2 = f"0x{image_base:08X},0x{ep_rva:08X},0x{va:08X}"
         log("Вопрос 2: \"В Optional Header PE32+ найдите: ImageBase. AddressOfEntryPoint. VA. Запишите ImageBase, EP RVA и VA в hex. Со всеми нулями.\"")
-        log(f"Ответ: \"{ans2}\"")
+        log(f"Ответ: {ans2}")
         log()
 
         total_raw_size = sum(s['raw_size'] for s in sections)
         sec_sizes = ", ".join([f"{s['name']}: 0x{s['raw_size']:08X}" for s in sections])
-        ans3 = f"SizeOfRawData по секциям -> {sec_sizes}. Суммарный размер: 0x{total_raw_size:08X} ({total_raw_size} байт)"
+        ans3 = f"0x{total_raw_size:08X},{total_raw_size}"
         log("Вопрос 3: \"В таблице секций (следует после Optional Header) у каждой секции есть поле SizeOfRawData. Найдите SizeOfRawData для каждой секции. Вычислите суммарный размер всех секций на диске (сумма SizeOfRawData). Ответ в байтах: hex и десятичное.\"")
-        log(f"Ответ: \"{ans3}\"")
+        log(f"Ответ: {ans3}")
         log()
 
         size_kb = size_of_image / 1024
-        ans4 = f"SizeOfImage: 0x{size_of_image:08X}, {size_kb:g} КБ"
+        ans4 = f"0x{size_of_image:08X},{size_kb:g}"
         log("Вопрос 4: \"В Optional Header найдите поле SizeOfImage. Это размер образа в виртуальной памяти (в байтах), выровненный по SectionAlignment. Запишите значение в hex и в килобайтах (десятичное).\"")
-        log(f"Ответ: \"{ans4}\"")
+        log(f"Ответ: {ans4}")
         log()
 
         f.seek(data_dir_offset + 12 * 8)
         iat_rva, iat_size = struct.unpack("<II", f.read(8))
         iat_file_offset = rva_to_offset(iat_rva, sections)
-        ans5 = f"RVA IAT: 0x{iat_rva:08X}, FileOffset IAT: 0x{iat_file_offset:08X}"
+        ans5 = f"0x{iat_rva:08X},0x{iat_file_offset:08X}"
         log("Вопрос 5: \"Прочитайте RVA из DataDirectory[12] и вычислите файловое смещение IAT (используйте таблицу секций). Запишите: RVA IAT и FileOffset IAT в hex.\"")
-        log(f"Ответ: \"{ans5}\"")
+        log(f"Ответ: {ans5}")
         log()
 
 
